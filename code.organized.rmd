@@ -1,0 +1,550 @@
+---
+title: "Codes for Group Project"
+author: "Yunyi Sun"
+date: "2022-10-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+getwd()
+## two ways to get back to parent dir
+# setwd('../')
+# setwd('./../')
+# getwd()
+# list.files()
+# 
+# source("filename.ext") # file in the current dir
+# source("../filename.ext") # file in the parent dir
+# source("childfolder/filename.ext") # file in the child dir
+# 
+
+```
+#### library
+```{r}
+library(readr)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+library(summarytools)
+library(car)
+```
+
+#### Check current dir
+
+```{r}
+# get the full path name of current executing markdown
+rstudioapi::getActiveDocumentContext()$path
+# get only the dir name
+dirname(rstudioapi::getActiveDocumentContext()$path)
+basename("../Combined__all3WAVES.csv") # give you the fill name
+```
+
+
+#### Data Import: Raw Data
+```{r}
+
+Combined_all3WAVES <- read.csv("../Combined__all3WAVES.csv",header=TRUE)
+colnames(Combined_all3WAVES)
+
+head(Combined_all3WAVES)
+```
+
+
+
+
+#### Creating new Data File
+```{r,Exploratory Data Analysis}
+
+
+## first we could create a subset of original data set
+
+df <- Combined_all3WAVES %>% select(Discipline,Race_ethnicity_ID,Gender,Sexual_orientation,U_others_sex_harass,Offended_sex_remarks) 
+
+unique(df$U_others_sex_harass)
+
+df1 <- Combined_all3WAVES %>% select(starts_with("Mental_Health_5_item_"),starts_with("Imposter_"),starts_with("Minority_Stress_"),Discipline,Race_ethnicity_ID,Gender,Sexual_orientation,U_others_sex_harass,Offended_sex_remarks) 
+# add the new mutated col to original df1
+colnames(df1)
+
+attach(df1)
+# detach(df1)
+df1 <- df1 %>% 
+  mutate(Discipline=recode(as.character(Discipline),
+                      "c('1','2')='1';c('3','4','5')='2'"),Gender=recode(as.character(Gender),"c('3','4','5','6','7')='3'")) %>%
+  mutate(across(c(Discipline,Gender,Sexual_orientation,
+                  U_others_sex_harass,Offended_sex_remarks),~as.character(.))) %>%
+  mutate_if(is.integer,as.numeric) 
+
+
+unique(df1$Discipline)
+unique(df1$Gender)
+unique(df1$U_others_sex_harass)
+unique(df1$Offended_sex_remarks)
+str(df1)
+
+# grepl("1",df1$Race_ethnicity_ID[11],fixed= TRUE)
+
+### Modify Race col
+Race_modify <-  function(x) x$Race_ethnicity_ID[i] <- ifelse("1" %in% str_split(x$Race_ethnicity_ID[i], ",", simplify = TRUE), "1",ifelse(x$Race_ethnicity_ID[i]!= "","2",NA)
+ )
+  for (i in 1:nrow(df)) {
+ df$Race_ethnicity_ID[i]  <- Race_modify(df)
+  } 
+
+
+str(df)
+unique(df$Race_ethnicity_ID)
+
+  for (i in 1:nrow(df1)) {
+ df1$Race_ethnicity_ID[i]  <- Race_modify(df1)
+  } 
+
+unique(df1$Race_ethnicity_ID)
+
+
+
+```
+
+
+```{r}
+
+
+## Recode the Mental health score
+df1 <- df1 %>% mutate(across(paste("Mental_Health_5_item_",c(3,4,5),sep="")
+                          ,~recode(as.character(.),"'1'='6';'2'='5';'3'='4';'4'='3';
+                                      '5'='2';'6'='1'")))
+
+str(df1)
+
+df1 <- df1 %>% transmute(!!!rlang::syms(setdiff(names(.), names(.)[c(which(grepl("Mental_Health_5_item_", names(df1),fixed=TRUE)),which(grepl("Imposter_",names(df1),fixed=TRUE)),which(grepl("Minority_Stress_",names(df1),fixed=TRUE)))])),Mental_Health_score=select(.,starts_with("Mental_Health_5_item_")) %>% rowSums(),Imposter_Score=select(.,starts_with("Imposter_"))%>% rowSums(), Minority_Stress_Score=select(.,starts_with("Minority_Stress_")) %>% rowSums()) 
+
+df1 <- df1 %>% mutate_if(is.character,as.factor) 
+# df1 %>% select(where(is.factor))
+
+## label
+df1 <- df1 %>% 
+  rename(Discipline_num=Discipline,Gender_num=Gender,
+         Sexual_orientation_num=Sexual_orientation) %>% 
+  mutate(
+  Discipline=plyr::mapvalues(Discipline_num,c("1","2"),c("Stem","Non-Stem")),
+  Gender=plyr::mapvalues(Gender_num,c("1","2","3"),c("Woman", "Man","Others")),
+  Sexual_orientation=plyr::mapvalues(Sexual_orientation_num,c("1","2","3","4","5"),c("Hetero","Homo","Bi","NL","PNA")),
+  Race=plyr::mapvalues(Race_ethnicity_ID,c("1","2"),c("Black","Non-Black")),
+  Sex_harass=plyr::mapvalues(U_others_sex_harass,c("1","2","3"),c("Yes","No","Not_Sure")),
+  Sex_remarks=plyr::mapvalues(Offended_sex_remarks,c("1","2","3"),c("Yes", "No","Not_Sure"))) %>% rename(Race_num=Race_ethnicity_ID,Sex_harass_num=U_others_sex_harass,Sex_remarks_num=Offended_sex_remarks)
+
+
+# df1 <- cbind(df1,df)  
+# df1 <- df1 %>% select(-c(colnames(df)))
+
+#select(-c(Race_ethnicity_ID,U_others_sex_harass,Offended_sex_remarks))
+
+### case when
+attach(df1)
+
+df1 <- df1 %>% mutate(Group = 
+                 case_when(Sex_harass == "Yes" & Sex_remarks == "Yes" ~ "Both",
+                           Sex_harass == "No" & Sex_remarks == "No" ~ "Neither",
+                      xor (Sex_harass == "Yes", Sex_remarks =="Yes") ~ "Either" ,
+                             TRUE ~ "Missing"))
+df1$Group <- df1$Group %>% as.factor() 
+df1$Group[df1$Group=="Missing"] <- NA
+df1$Group <- factor(df1$Group)
+
+summary(df1)
+unique(df1$Group)
+str(df1) 
+ncol(df1)
+
+```
+
+
+```{r}  
+
+
+  
+tempcol <- df1 %>% select(starts_with("Mental_Health_5_item_")) %>%  transmute(Mental_Health_score = rowSums(.)) 
+df1$Mental_Health_score <- tempcol[[1]]
+# %>% rowwise() %>% mutate(Mental_Health_score = sum(df1)), if you don't specify the rowwise, mutate would calculate the sum of whole dataframe 
+
+
+
+#getting rid of some cols
+temp <- colnames(df1) %>% str_subset(pattern ="Mental_Health_5_item_")
+df1 <- df1[-which(colnames(df1) %in% temp)]
+# add a new mutated col
+df1 <- df1 %>% mutate(perNA = rowSums(is.na(df1))) # %>% select(perNA,everything()) 
+# created a unique table
+df1 %>% group_by(perNA) %>% summarise(n=n())
+# make unqiue missing values as factor
+df1$perNA <- as.factor(df1$perNA)
+# create a missing value dataset
+dfmissing <- df1 %>% filter(rowSums(is.na(df1)) > 0)
+# create a crosstable to see the distribution of missing values across subcategories of one discrete variable
+library(summarytools)
+ctable(
+  x = dfmissing$Discipline,
+  y = dfmissing$perNA,
+prop = "r")
+ctable(
+  x = dfmissing$Gender,
+  y = dfmissing$perNA,
+prop = "r")
+ctable(
+  x = dfmissing$Race_ethnicity_ID,
+  y = dfmissing$perNA,
+prop = "r")
+## We could try check the missing value distribution pattern across categories use chi-sqaured test
+obsfreq <- c(0,0,10,26,0)
+nullprobs <- c(0,0.021,0.234,0.745,0)
+chisq.test(obsfreq,p=nullprobs)
+unique(df1$perNA)
+temp <- df1 %>% select(Discipline,perNA) %>% group_by(perNA,Discipline) %>% summarise(n=n()) 
+temp[[3]]
+temp$n
+data_res <- temp %>% mutate(Percentage=round(n/sum(temp[[3]]),2)*100) %>% rename('Percentage(%)' = Percentage)
+
+#Try to get total percentage.
+df1 %>% filter(perNA == 0) %>% select(Gender,Discipline) %>% group_by(Gender,Discipline) %>% summarise(n=n())
+
+```
+
+
+
+### Correlation
+```{r,echo = TRUE}
+
+
+
+
+
+```
+
+### BARPLOT WORKFLOW
+```{r, barplot}
+str(df1)
+df3 <- df1 %>% filter(perNA ==0)
+# let's pretend all variables in df3 are character,except continuous
+TEMP <- c()
+i=1
+for (col in colnames(df3)){
+  if(is.factor(df3[,col][[1]])){
+      TEMP[i] <- col
+      i=i+1
+  } else{
+    next
+  }
+}
+
+# or use mutate_if
+
+# all character columns to factor:
+df3 <- mutate_if(df3, is.character, as.factor)
+
+# select character columns 'char1', 'char2', etc. to factor:
+df3 <- mutate_at(df3, vars(char1, char2), as.factor)
+
+# get the names of variables that you wnat to create barplots
+TEMP <- colnames(df1)[-c(5:6)]
+
+choose(4,2)
+name_pair <- array(dim=c(6,2))
+i=1
+while (i <= 6){
+  temp_p <- sample(TEMP,size=2,replace=FALSE)
+  if (all(is.na(name_pair))){
+  name_pair[i,] <- temp_p
+  i=i+1
+} else{ 
+  for (n in 1:i-1){
+      if (identical(name_pair[n,],temp_p)==1){
+      break
+      }else{
+      if (n < i-1){
+      next
+      }else{
+      name_pair[i,] <- temp_p
+      i=i+1
+        }
+      }
+    }
+  } 
+}
+
+# you don't need the above loop, this codes below
+library(prodlim)
+name_pair <- t(combn(unique(TEMP),2))
+
+nrow(name_pair)
+name_pair[1,][1]
+```
+
+```{r fig.width=10}
+
+for (col in TEMP){
+  df2[col]<- lapply(df2[col],factor)
+}
+
+df2 <- df1 %>% filter(perNA == 0)
+
+for (row in 1:nrow(name_pair))
+{
+p <- df2 %>% select(name_pair[row,][1],name_pair[row,][2]) %>% group_by(df2[,name_pair[row,][1]],df2[,name_pair[row,][2]]) %>% summarise(n=n()) %>%  mutate(Percentage = round(n/sum(c(n)),3)*100) %>% 
+ggplot(aes(x=!!sym(name_pair[row,][1]), y=Percentage, fill=!!sym(name_pair[row,][2]),colour=!!sym(name_pair[row,][2]))) + geom_bar(stat="identity",position = "dodge", alpha = 0.5) + labs(x=name_pair[row,][1], y="Percentage(%)") +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(legend.position = c(0.1, 0.75)) +
+  geom_text(aes(label= paste(Percentage,'%',sep="")), position = position_dodge(0.90), size = 6, 
+            vjust=-0.8, hjust=0.35, colour = "gray25") + ylim(0, 100) + ggtitle(paste("Barplot","of",name_pair[row,][1],"by",name_pair[row,][2],sep=" ")) + theme(plot.title = element_text(hjust = 0.5,size=18,face="bold"))+ geom_text(aes(label=!!sym(name_pair[row,][2]), y = 6.25), position = position_dodge(0.90),show.legend = FALSE) +theme(axis.text=element_text(size=15),text = element_text(size=rel(4),face="bold"), legend.text = element_text(size=15,face="bold"),legend.key.size = unit(2, 'cm') )  
+print(p)
+}
+
+
+
+```
+
+
+```{r,fig.width = 10}
+  df  %>% select(name_pair[1,][1],name_pair[1,][2]) %>% group_by(df[,name_pair[1,][1]],df[,name_pair[1,][2]]) %>% summarise(n=n()) %>%  mutate(Percentage = round(n/sum(c(n)),3)*100) %>% 
+ggplot(aes(x=!!sym(name_pair[1,][1]), y=Percentage, fill=!!sym(name_pair[1,][2]),colour=!!sym(name_pair[1,][2])))+geom_bar(stat="identity",position = "dodge", alpha = 0.5)
+
+df2 %>% filter(perNA == 0) %>% select(name_pair[1,][1],name_pair[1,][2]) %>% group_by(df2[,name_pair[1,][1]],df2[,name_pair[1,][2]]) %>% summarise(n=n()) %>%  mutate(Percentage = round(n/sum(c(n)),3)*100) %>% 
+ggplot(aes(x=!!sym(name_pair[1,][1]), y=Percentage, fill=!!sym(name_pair[1,][2]),colour=!!sym(name_pair[1,][2]))) + geom_bar(stat="identity",position = "dodge", alpha = 0.5) + labs(x=name_pair[1,][1], y="Percentage(%)") +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(legend.position = c(0.1, 0.75)) +
+  geom_text(aes(label= paste(Percentage,'%',sep="")), position = position_dodge(0.90), size = 6, 
+            vjust=-0.8, hjust=0.35, colour = "gray25") + ylim(0, 100) + ggtitle("Barplot of Gender by Group") + theme(plot.title = element_text(hjust = 0.5,size=18,face="bold"))+ geom_text(aes(label=!!sym(name_pair[1,][2]), y = 6.25), position = position_dodge(0.90),show.legend = FALSE) +theme(axis.text=element_text(size=15),text = element_text(size=rel(4),face="bold"), legend.text = element_text(size=15,face="bold"),legend.key.size = unit(2, 'cm') )
+
+
+ 
+```
+
+
+
+### Assumption testing 
+```{r,assumption,echo=TRUE}
+## Check distribution
+for (x in 2:ncol(df))
+{
+  y<-df[,x][[1]];
+  y.name<-colnames(df)[x];
+  split.screen(c(1,2)) 
+  screen(1);hist(y,breaks = "FD", xlab =y.name,main="")
+  screen(2);qqnorm(y,xlab="normal quantiles", main=y.name);qqline(y) 
+  close.screen(all = TRUE)
+} 
+
+## Check Normality
+result<-apply(df,MARGIN = 2, FUN=shapiro.test)
+
+result<-simplify2array(result)
+result
+
+res<-array(unlist(result[1:2,]),dim=c(2,length(2:ncol(df))))
+dimnames(res)<-dimnames(result[1:2,])
+res<-t(res)
+res<-res[order(res[,2]),]#order the p-value ascending,from small to large
+res
+cbind(res,adjusted_p=0.05/length(2:ncol(df)):1)
+
+## Check Homogeneity of Variance
+
+
+```
+##### centering the continuous IV
+```{r}
+is.double(df[,"Mental_Score"][[1]]) 
+data_m<- data.matrix(df)
+
+# general function
+center<- function(x) if(is.data.frame(x)){x[,col][[1]]-mean(x[,col][[1]])} else {x-mean(x)}
+col <- "Mental_Health_score"
+center(df2[,col][[1]])
+
+for (col in colnames(df2)){
+  if (is.double(df2[,col][[1]])){
+     df2[,paste(col,"_Centered",sep="")] <- center(x)
+  }
+}
+library(tidyverse)
+##or 
+  0      
+col <- "Mental_Health_score"  
+df2 <- mutate_if(df2,is.double,center) 
+rm(E)
+```
+
+
+
+
+
+```{r, useless}
+
+# Function combn()
+B <-array(dim=c(6,2))
+B[1,] <- c(1,4)
+library(prodlim)
+name_pair <- t(combn(unique(TEMP),2))
+
+# Function rowSums()  
+M <- matrix(c(1,2,3,4,5,6),nrow=3)
+rowSums(M == c(1,2))==2
+
+# Function any()/all()
+all(c(9,7) %in%  M) ==1 ==1
+all(temp_p %in% name_pair) !=1 ==1
+
+#Function seq()
+L <- matrix(seq(1,10,length.out=6),nrow=3)
+
+#Function row.match()
+#Function sample.int()
+M <- data.frame(num1=1:3,num2=4:6)
+v <- matrix(sample.int(10,6),nrow=3)
+row.match(v[1,],M) # return of rowindex of the matching row in M
+row.match(c(3,6),M)
+dim(M)
+
+tab <- data.frame(num=1:26,abc=letters)
+x <- c(3,"c") # numeric +char becomes char, this is coersion
+typeof(c(as.numeric(tab[row.match(x,tab),"num"]),as.character(tab[row.match(x,tab),"abc"]))[1])
+# extract the columns values from dataframe
+tab[[2]]
+# extracting values from rows but requiring you have same types of objects
+dat <- as_tibble(iris)
+pulled_row <- dat %>% slice(3) %>% flatten_dbl() # better to use flatten_chr()
+
+#ways to extract vectors from dataframe
+DA <- data.frame(x = 1:3, y = 3:1, z = letters[1:3])
+DA[DA$x == 2, ]
+
+DA<- data.matrix(DA)
+DA[DA[,] == 2] # this returns you the row that satisfies the condition
+DA[DA[,1] == 2,1] # you could also subsetting that based on column condition 
+DA[2,DA[2,]==2] # or row condition
+#Function identical()
+identical(c(1,4),M[1,]) 
+
+#Function is.na()
+sum(!is.na(name_pair[,1]))
+
+
+```
+
+
+```{r}
+# Load ggplot2
+library(ggplot2)
+library("ggpubr")
+theme_set(
+  theme_bw() +
+    theme(legend.position = "top")
+  )
+
+# Create data
+data_tn <- data.frame(
+  name=c("Lorlatinib","Crizotinib","Alectini","Ensartinib","Brigatinib") ,  
+  ORR=c(90,87.5,82.9,77.8,56),
+  HR = c(0.27,0.49,0.50,0.51,0.49),
+  PFS=c(36.7,11.1,34.8,26.2,24)
+  )
+attach(data_tn)
+# Barplot
+library(ggplot2)
+ggplot(data_tn,aes(x=as.factor(name), y=Percentage, fill=name,colour=name)) +
+  geom_bar(stat="identity",position = "dodge", alpha = 0.5) + 
+  labs(x="ALK TLIs", y="ORR(%)") +
+  geom_text(aes(label= paste(Percentage,'%',sep="")), position = position_dodge(0.90), size = 3, 
+            vjust=-0.8, hjust=0.35, colour = "gray25") +
+  ylim(0, 100)
+
+
+b1 <- ggplot(data_tn,aes(x=as.factor(name), y=ORR, fill=name,colour=name)) +
+  geom_bar(stat="identity",position = "dodge", alpha = 0.5,width=0.6) + 
+  labs(x="ALK TLIs", y="ORR(%)") +
+  geom_text(aes(label= paste(ORR,'%',sep="")), position = position_dodge(0.90), size = 3, 
+            vjust=-0.8, hjust=0.35, colour = "gray25") +
+  ylim(0, 100)+theme_bw() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+# +theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+b2<-ggplot(data_tn,aes(x=as.factor(name), y=HR, fill=name,colour=name)) +
+  geom_bar(stat="identity",position = "dodge", alpha = 0.5,width=0.6) + 
+  labs(x="ALK TLIs", y="HR(rate)") +
+  geom_text(aes(label= paste(HR,' rate',sep="")), position = position_dodge(0.90), size = 3, 
+            vjust=-0.8, hjust=0.37, colour = "gray25") + ylim(0, 0.6)+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+theme_bw() + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+
+b3<-ggplot(data_tn,aes(x=as.factor(name), y=PFS, fill=name,colour=name)) +
+  geom_bar(stat="identity",position = "dodge", alpha = 0.5,width=0.6) + 
+  labs(x="ALK TLIs", y="PFS(Months)") +
+  geom_text(aes(label= paste(PFS,' Months',sep="")), position = position_dodge(0.90), size = 3, 
+            vjust=-0.8, hjust=0.45, colour = "gray25") +theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ ylim(0, 40)+theme_bw() + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+library(patchwork)
+b1+b2+b3+ plot_layout(nrow = 3)
+
+library(gridExtra)
+grid.arrange(b1,b2,b3, nrow = 1)
+
+library("ggpubr")
+ggarrange(b1,b2,b3,
+                    labels = c("A", "B", "C"),
+                    ncol = 3, nrow = 1)
+
+library(grid)
+grid.newpage()
+grid.draw(rbind(ggplotGrob(b1), ggplotGrob(b2),ggplotGrob(b3), size = "last"))
+
+library("colorspace")
+pal <- choose_palette()
+
+library("ggpubr")
+theme_set(
+  theme_bw() +
+    theme(legend.position = "top")
+  )
+
+
+p1 <- ggplot(data_tn,aes(x=as.factor(name), y=ORR, fill=name)) +geom_bar(stat="identity",position = "dodge", alpha = 0.5,width=0.5) + scale_fill_brewer()+
+  labs(x="ALK TLIs", y="ORR(%)") + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  geom_text(aes(label= paste(ORR,'%',sep="")), position = position_dodge(0.90), size = 5, vjust=-0.8, hjust=0.5, colour = "gray25") +
+  ylim(0, 100)+theme(axis.text=element_text(size=15),text = element_text(size=rel(4),face="bold"), legend.text = element_text(size=15,face="bold"),legend.key.size = unit(1.5, 'cm') )  
+
+
+p2 <- ggplot(data_tn,aes(x=as.factor(name), y=HR, fill=name)) +geom_bar(stat="identity",position = "dodge", alpha = 0.5,width=0.5) + scale_fill_brewer()+
+  labs(x="ALK TLIs", y="PHR(Rate)") + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  geom_text(aes(label= paste(HR,' rates',sep="")), position = position_dodge(0.90), size = 5, vjust=-0.8, hjust=0.5, colour = "gray25") +
+  ylim(0, 0.6)+theme(axis.text=element_text(size=15),text = element_text(size=rel(4),face="bold"), legend.text = element_text(size=15,face="bold"),legend.key.size = unit(1.5, 'cm') )  
+
+png(file="p3.png")
+ggplot(data_tn,aes(x=as.factor(name), y=PFS, fill=name)) +geom_bar(stat="identity",position = "dodge", alpha = 0.5,width=0.5) + scale_fill_brewer()+
+  labs(x="ALK TLIs", y="PFS(Months)") + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_rect(fill = "transparent"), plot.background = element_rect(fill = "transparent", colour = NA)) +geom_text(aes(label= paste(PFS,' Months',sep="")), position = position_dodge(0.90), size = 2, vjust=-0.8, hjust=0.5, colour = "gray25") + ylim(0, 45)+theme(axis.text=element_text(size=8),text = element_text(size=rel(3.2),face="bold"), legend.text = element_text(size=8,face="bold"),legend.key.size = unit(0.8, 'cm') )
+dev.off()
+
+print(p3)
+library("Cairo")
+install.packages("Cairo")
+CairoPNG(filename = "TEST.png", bg = "transparent")
+p3
+dev.off()
+
+print(p3)
+
+
+library("ggpubr")
+ggarrange(p1,p2,p3,
+                    labels = c("A", "B", "C"),
+                    ncol = 3, nrow = 1)
+p1
+p2
+p3
+```
